@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: btc_collector_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: btc_collector
+      POSTGRES_USER: btc_collector
+      POSTGRES_PASSWORD: changeme
+    ports:
+      - "5432:5432"
+    volumes:
+      - btc_collector_pgdata:/var/lib/postgresql/data
+
+volumes:
+  btc_collector_pgdata:
