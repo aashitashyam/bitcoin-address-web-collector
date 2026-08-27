@@ -1,8 +1,4 @@
 # One seed URL per line. Lines starting with # are ignored.
-# Only put URLs here you have the right to crawl - check each site's
-# robots.txt and terms of service. The crawler auto-respects robots.txt,
-# but ToS/legal compliance for your jurisdiction and research ethics
-# board (if applicable) is on you.
 #
 # Examples (replace with real targets for your research):
 # https://example-charity.org/donate

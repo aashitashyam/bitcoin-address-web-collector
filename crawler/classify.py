@@ -2,10 +2,7 @@
 Rough heuristic classification of what kind of page an address was found
 on, based on keywords in the URL and page title.
 
-This is a weak signal, not ground truth - a page titled "Support Our Work"
-won't match "donate" and will fall through to "unknown". Treat source_type
-as a hint worth weighting alongside domain_count when doing attribution,
-not as a verified label. Extend _KEYWORDS as you learn what your actual
+Extend _KEYWORDS as you learn what your actual
 seed sites' pages look like.
 """
 

@@ -1,6 +1,6 @@
 """
 Central configuration. Everything is overridable via environment variables
-(or a .env file, loaded automatically) so you never hardcode credentials.
+(or a .env file, loaded automatically) so never hardcode credentials.
 """
 
 import os
@@ -29,7 +29,6 @@ class DBConfig:
 
 @dataclass
 class CrawlConfig:
-    # Identify yourself honestly. Some sites will allowlist/blocklist by UA.
     user_agent: str = os.getenv(
         "BTC_CRAWLER_UA",
         "BitcoinAddressResearchCrawler/1.0 (+academic research project)",
