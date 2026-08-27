@@ -1,0 +1,5 @@
+# One seed URL per line. Lines starting with # are ignored.
+#
+# Examples (replace with real targets for your research):
+# https://example-charity.org/donate
+# https://example-merchant.com/pay-with-bitcoin
