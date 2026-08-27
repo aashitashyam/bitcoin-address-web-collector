@@ -13,4 +13,4 @@ venv/
 .idea/
 .vscode/
 
-.seeds.txt
+seeds.txt
