@@ -1,5 +1,6 @@
 """
-All database access lives here. Every function takes an open connection
+All Database access here. 
+Every function takes an open connection
 so the caller controls transaction boundaries.
 """
 
@@ -10,7 +11,7 @@ from urllib.parse import urlparse
 
 import psycopg
 
-from config import DB
+from config import CRAWL, DB
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
 
@@ -51,7 +52,7 @@ def get_next_url(conn) -> dict | None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, url, depth
+            SELECT id, url, depth, attempts
             FROM crawl_queue
             WHERE status = 'pending' AND next_crawl <= NOW()
             ORDER BY priority DESC, next_crawl
@@ -62,26 +63,75 @@ def get_next_url(conn) -> dict | None:
         row = cur.fetchone()
         if not row:
             return None
-        queue_id, url, depth = row
+        queue_id, url, depth, attempts = row
         cur.execute(
             "UPDATE crawl_queue SET status = 'processing' WHERE id = %s",
             (queue_id,),
         )
     conn.commit()
-    return {"id": queue_id, "url": url, "depth": depth}
+    return {"id": queue_id, "url": url, "depth": depth, "attempts": attempts}
 
 
-def finish_url(conn, queue_id: int, status: str, revisit_hours: int) -> None:
+_TRANSIENT_OUTCOMES = {"rate_limited", "server_error", "request_error"}
+_PERMANENT_FAIL_OUTCOMES = {"http_error", "unsafe_destination"}
+
+
+def finish_url(
+    conn,
+    queue_id: int,
+    outcome: str,
+    attempts: int = 0,
+    retry_after_seconds: int | None = None,
+) -> None:
+    """
+    outcome is one of: success, robots_disallowed, non_html, rate_limited,
+    server_error, request_error, http_error, unsafe_destination.
+
+    Scheduling:
+      - success / robots_disallowed / non_html -> back to 'pending' after
+        the normal revisit cooldown, attempts reset to 0.
+      - rate_limited / server_error / request_error -> transient failure;
+        back to 'pending' with exponential backoff (respecting a
+        Retry-After header if the site sent one), unless attempts has
+        exceeded the configured max, in which case it's marked 'failed'
+        and won't be retried again.
+      - http_error / unsafe_destination -> permanent failure, marked
+        'failed' immediately. Retrying a 404 or a private-IP address
+        won't help.
+    """
+    if outcome in _PERMANENT_FAIL_OUTCOMES:
+        status, next_attempts, backoff_minutes = "failed", attempts, 0
+
+    elif outcome in _TRANSIENT_OUTCOMES:
+        next_attempts = attempts
+        if next_attempts >= CRAWL.max_retry_attempts:
+            status, backoff_minutes = "failed", 0
+        else:
+            status = "pending"
+            backoff_minutes = min(
+                CRAWL.retry_base_minutes * (2 ** max(next_attempts - 1, 0)),
+                CRAWL.retry_max_hours * 60,
+            )
+            if retry_after_seconds:
+                backoff_minutes = max(backoff_minutes, retry_after_seconds / 60)
+
+    else:  # success, robots_disallowed, non_html
+        status = "pending"
+        next_attempts = 0
+        backoff_minutes = CRAWL.revisit_hours_default * 60
+
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE crawl_queue
             SET status = %s,
+                attempts = %s,
+                last_outcome = %s,
                 last_crawled = NOW(),
-                next_crawl = NOW() + (%s || ' hours')::interval
+                next_crawl = NOW() + (%s || ' minutes')::interval
             WHERE id = %s
             """,
-            (status, str(revisit_hours), queue_id),
+            (status, next_attempts, outcome, str(backoff_minutes), queue_id),
         )
     conn.commit()
 
@@ -116,7 +166,13 @@ def upsert_address_observation(
     context: str,
     content_hash: str,
     source_type: str = "unknown",
-) -> int:
+) -> dict:
+    """
+    Returns {"address_id": int, "address_is_new": bool, "domain_is_new": bool}.
+    "is_new" is computed via Postgres's `xmax = 0` trick, which is true
+    only when the row was actually INSERTed by this statement (not when
+    an ON CONFLICT DO UPDATE touched an existing row).
+    """
     domain = domain_of(url)
     with conn.cursor() as cur:
         cur.execute(
@@ -124,11 +180,11 @@ def upsert_address_observation(
             INSERT INTO domains (domain)
             VALUES (%s)
             ON CONFLICT (domain) DO UPDATE SET last_seen = NOW()
-            RETURNING id
+            RETURNING id, (xmax = 0) AS is_new
             """,
             (domain,),
         )
-        domain_id = cur.fetchone()[0]
+        domain_id, domain_is_new = cur.fetchone()
 
         cur.execute(
             """
@@ -138,11 +194,11 @@ def upsert_address_observation(
                 last_seen          = NOW(),
                 last_source_url    = EXCLUDED.last_source_url,
                 observation_count  = bitcoin_addresses.observation_count + 1
-            RETURNING id
+            RETURNING id, (xmax = 0) AS is_new
             """,
             (address, address_type, url, url),
         )
-        address_id = cur.fetchone()[0]
+        address_id, address_is_new = cur.fetchone()
 
         cur.execute(
             """
@@ -163,7 +219,7 @@ def upsert_address_observation(
             (address_id, address_id),
         )
     conn.commit()
-    return address_id
+    return {"address_id": address_id, "address_is_new": address_is_new, "domain_is_new": domain_is_new}
 
 
 def record_onchain_check(conn, address: str, has_utxo: bool) -> None:
@@ -175,6 +231,35 @@ def record_onchain_check(conn, address: str, has_utxo: bool) -> None:
             WHERE address = %s
             """,
             (has_utxo, address),
+        )
+    conn.commit()
+
+
+# ---------------- crawl run stats ----------------
+
+def record_crawl_run(conn, started_at, stats: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO crawl_runs (
+                started_at, pages_crawled, pages_skipped, pages_failed,
+                requests_total, robots_skipped, rate_limited,
+                server_errors_or_timeouts, http_errors, unsafe_urls_rejected,
+                candidates_found, valid_candidates, new_addresses,
+                duplicate_observations, new_domains, links_enqueued,
+                unexpected_errors
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                started_at,
+                stats["pages_crawled"], stats["pages_skipped"], stats["pages_failed"],
+                stats["requests_total"], stats["robots_skipped"], stats["rate_limited"],
+                stats["server_errors_or_timeouts"], stats["http_errors"], stats["unsafe_urls_rejected"],
+                stats["candidates_found"], stats["valid_candidates"], stats["new_addresses"],
+                stats["duplicate_observations"], stats["new_domains"], stats["links_enqueued"],
+                stats["unexpected_errors"],
+            ),
         )
     conn.commit()
 

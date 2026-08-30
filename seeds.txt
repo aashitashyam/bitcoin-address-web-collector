@@ -1,7 +1,0 @@
-https://bitcoin.org/en/support-bitcoin
-https://bitcoin.org/en/
-https://donate.bluewallet.io/
-https://grapheneos.org/donate
-https://www.256foundation.org/donate
-https://github.com/ordinals/ord
-https://github.com/iancoleman/bip39

@@ -1,6 +1,6 @@
 """
 Central configuration. Everything is overridable via environment variables
-(or a .env file, loaded automatically) so never hardcode credentials.
+(or a .env file, loaded automatically) so no hardcoded credentials.
 """
 
 import os
@@ -29,6 +29,7 @@ class DBConfig:
 
 @dataclass
 class CrawlConfig:
+    # Some sites will allowlist/blocklist by UA.
     user_agent: str = os.getenv(
         "BTC_CRAWLER_UA",
         "BitcoinAddressResearchCrawler/1.0 (+academic research project)",
@@ -40,6 +41,16 @@ class CrawlConfig:
     respect_robots_txt: bool = os.getenv("BTC_RESPECT_ROBOTS", "true").lower() == "true"
     # Hours to wait before a URL is eligible to be recrawled.
     revisit_hours_default: int = int(os.getenv("BTC_REVISIT_HOURS", "48"))
+
+    # Reject discovered/fetched URLs that resolve to a private, loopback,
+    # link-local, or internal IP 
+    block_private_ips: bool = os.getenv("BTC_BLOCK_PRIVATE_IPS", "true").lower() == "true"
+
+    # Transient failures (5xx, timeouts, 429) are retried with exponential
+    # backoff up to this many times before being given up on permanently.
+    max_retry_attempts: int = int(os.getenv("BTC_MAX_RETRY_ATTEMPTS", "5"))
+    retry_base_minutes: float = float(os.getenv("BTC_RETRY_BASE_MINUTES", "5"))
+    retry_max_hours: float = float(os.getenv("BTC_RETRY_MAX_HOURS", "24"))
 
 
 @dataclass
@@ -54,3 +65,4 @@ class BitcoinCoreRPCConfig:
 DB = DBConfig()
 CRAWL = CrawlConfig()
 RPC = BitcoinCoreRPCConfig()
+

@@ -2,11 +2,10 @@
 Minimal JSON-RPC client for Bitcoin Core, used to enrich web-discovered
 addresses with on-chain reality.
 
-IMPORTANT LIMITATION: Bitcoin Core does not index arbitrary addresses by
-default (no built-in "give all transactions for address X").  
+***LIMITATION: Bitcoin Core does not index arbitrary addresses by default.
 `scantxoutset` checks the CURRENT UTXO set only. 
 True = the address currently holds unspent funds (solid evidence it's real and was funded). 
-False proves nothing about history - a spent-out address that was used heavily in the past will also
+False proves nothing about history - a spent-out address used heavily in past can also
 show False, since scantxoutset can't see spent outputs. 
 """
 
@@ -44,9 +43,10 @@ def scan_address(address: str) -> dict:
     """
     Checks the CURRENT UTXO set for this address via scantxoutset.
     Does not require txindex. Can take a while on a full node the first
-    time (it scans the whole UTXO set), so don't call this per-address
-    in a tight loop against a busy node - batch it, or run scantxoutset
-    with multiple descriptors at once if you need to check many addresses.
+    time as it scans the whole UTXO set, 
+    so don't call this per-address in a tight loop against a busy node - 
+    batch it, or run scantxoutset with multiple descriptors at once
+    if need to check many addresses.
     """
     descriptor = {"desc": f"addr({address})"}
     result = _call("scantxoutset", ["start", [descriptor]])
